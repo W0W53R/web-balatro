@@ -1,5 +1,5 @@
 window.templates = {
-    "index.html": `<!DOCTYPE html><html><head><script>const PREFIX = "Balatro_%%VERSION_NAME%%_";const originalOpen = indexedDB.open;const originalDeleteDatabase = indexedDB.deleteDatabase;indexedDB.open = function(name, version) {const prefixedName = PREFIX + name;return version !== undefined?originalOpen.call(this, prefixedName, version):originalOpen.call(this, prefixedName);};indexedDB.deleteDatabase = function(name) {const prefixedName = PREFIX + name;return originalDeleteDatabase.call(this, prefixedName);};</script><script src="love.min.js"></script><title>Love.js</title><style>#canvas {position:absolute;top: 0;left: 0;width: 100vw;height: 100vh;}body {width: 100vw;height: 100vh;margin: 0px;}</style></head><body><canvas id="canvas"></canvas><script src="module.js"></script><script>(async()=>{const d=await getSource();Module={INITIAL_MEMORY:2**28,canvas:canvas,printErr:console.error,arguments:["game.love"]};Module.preRun = [function(){Module.addRunDependency("fp game.love");var ptr = Module.getMemory(d.length);Module['HEAPU8'].set(d, ptr);Module.FS_createDataFile('/', "game.love", d, true, true, true);Module.removeRunDependency("fp game.love")}];Love(Module)})()</script></body></html>`,
+    "index.html": `<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><script>const PREFIX = "Balatro_%%VERSION_NAME%%_";const originalOpen = indexedDB.open;const originalDeleteDatabase = indexedDB.deleteDatabase;indexedDB.open = function(name, version) {const prefixedName = PREFIX + name;return version !== undefined?originalOpen.call(this, prefixedName, version):originalOpen.call(this, prefixedName);};indexedDB.deleteDatabase = function(name) {const prefixedName = PREFIX + name;return originalDeleteDatabase.call(this, prefixedName);};</script><script src="love.min.js"></script><title>Balatro (%%VERSION_TITLE%%)</title><style>#canvas {position:absolute;top: 0;left: 0;width: 100vw;height: 100vh;}body {width: 100vw;height: 100vh;margin: 0px;}</style></head><body><canvas id="canvas"></canvas><script src="module.js"></script><script>(async()=>{const d=await getSource();Module={INITIAL_MEMORY:2**28,canvas:canvas,printErr:console.error,arguments:["game.love"]};Module.preRun = [function(){Module.addRunDependency("fp game.love");var ptr = Module.getMemory(d.length);Module['HEAPU8'].set(d, ptr);Module.FS_createDataFile('/', "game.love", d, true, true, true);Module.removeRunDependency("fp game.love")}];Love(Module)})()</script></body></html>`,
     "love.min.js": `var Love = function () {
     var _scriptDir = "undefined" != typeof document && document.currentScript ? document.currentScript.src : void 0;
     return "undefined" != typeof __filename && (_scriptDir = _scriptDir || __filename),
@@ -11486,15 +11486,25 @@ window.templates = {
                     Module.preInit.pop()();
             var shouldRunNow = !0;
             let synced = false;
-            setInterval(() => {
-                if (synced) {
-                    FS.syncfs(true, (e) => {
-                        if (e) {
-                            Module.printErr(e)
-                        }
-                    })
-                }
-            }, 10 * 1000)
+            // Persist the in-memory save directory to IndexedDB. syncfs(false) writes
+            // memory -> IndexedDB; syncfs(true) would reload from IndexedDB and drop
+            // any file created since the last write (e.g. the current run's save).
+            let syncing = false;
+            function persist() {
+                if (!synced || syncing) return;
+                syncing = true;
+                FS.syncfs(false, (e) => {
+                    syncing = false;
+                    if (e) {
+                        Module.printErr(e)
+                    }
+                })
+            }
+            setInterval(persist, 10 * 1000)
+            document.addEventListener("visibilitychange", () => {
+                if (document.visibilityState === "hidden") persist()
+            })
+            window.addEventListener("pagehide", persist)
             return Module.noInitialRun && (shouldRunNow = !1),
                 noExitRuntime = !0,
                 run(),
@@ -11506,13 +11516,7 @@ window.templates = {
                         e ? Module.printErr(e) : Module.removeRunDependency("IDBFS_sync")
                     }
                     )),
-                    window.addEventListener("beforeunload", (function (e) {
-                        FS.syncfs(!1, (function (e) {
-                            e && Module.printErr(e)
-                        }
-                        ))
-                    }
-                    ))),
+                    window.addEventListener("beforeunload", persist)),
                 Love.ready
         }
 }();

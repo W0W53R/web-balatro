@@ -3,43 +3,32 @@ function $(id) {
 }
 
 /**
- * 
- * @param {Blob | File} blob 
- * @returns {Promise<ArrayBuffer>}
- */
-function getArrayBufferFromBlob(blob) {
-    let resolve, reject, promise = new Promise((res, rej) => {resolve = res; reject = rej});
-    const reader = new FileReader();
-    reader.onload = function() {
-        resolve(reader.result)
-    };
-    reader.onerror = function() {
-        reject()
-    }
-    reader.readAsArrayBuffer(blob);
-    return promise;
-}
-
-/**
- * 
- * @param {Blob | File} blob 
+ *
+ * @param {Blob | File} blob
  * @returns {Promise<String>}
  */
 function getDataURIFromBlob(blob) {
-    let resolve, reject, promise = new Promise((res, rej) => {resolve = res; reject = rej});
-    const reader = new FileReader();
-    reader.onload = function() {
-        resolve(reader.result)
-    };
-    reader.onerror = function() {
-        reject()
-    }
-    reader.readAsDataURL(blob);
-    return promise;
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(reader.error || new Error("Could not read the file."));
+        reader.readAsDataURL(blob);
+    });
 }
 
-let cached_games = []
-
+/**
+ * Ask the browser not to evict our IndexedDB data (built games and saves)
+ * when the device is low on storage. Best-effort; some browsers ignore it.
+ */
+async function requestPersistentStorage() {
+    try {
+        if (navigator.storage && navigator.storage.persist && !(await navigator.storage.persisted())) {
+            await navigator.storage.persist()
+        }
+    } catch (err) {
+        console.warn("Persistent storage request failed", err)
+    }
+}
 
 document.addEventListener("DOMContentLoaded", async () => {
     const file_input = $("exeInput")
@@ -55,14 +44,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     const build_button = $("parseBtn")
 
-    const progress_bar = $("progressBar")
-    const status_text = $("status")
-
-
-
-    add_mods_button.onclick = addModDir
+    add_mods_button.onclick = guarded(addModDir)
     clear_mods_button.onclick = clearMods
-    use_lovely_dump_button.onclick = useLovelyDump
+    use_lovely_dump_button.onclick = guarded(useLovelyDump)
+    renderModsList()
+
+    if (!window.showDirectoryPicker) {
+        add_mods_button.disabled = true
+        use_lovely_dump_button.disabled = true
+        $("modSupportHint").hidden = false
+    }
 
     function checkBuildButton() {
         if (file_input.files.length > 0 && load_exe_radio.checked) {
@@ -74,102 +65,131 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
     }
 
-    file_input.onchange = checkBuildButton
-    load_exe_radio.onchange = checkBuildButton
-    load_vanilla_radio.onchange = checkBuildButton
+    const drop_zone = $("dropZone")
 
-    build_button.addEventListener("click", async function() {
+    function formatSize(bytes) {
+        return bytes >= 1048576 ? (bytes / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(bytes / 1024)) + " KB"
+    }
+
+    function updateDropZone() {
+        const file = file_input.files[0]
+        drop_zone.classList.toggle("has-file", !!file)
+        drop_zone.classList.toggle("dimmed", load_vanilla_radio.checked)
+        $("dropTitle").textContent = file ? file.name : "Drop Balatro.exe here"
+        $("dropSub").textContent = file ? formatSize(file.size) + " · click to choose another" : "or click to browse (.exe or .love)"
+    }
+
+    function onSourceChange() {
+        updateDropZone()
+        checkBuildButton()
+    }
+
+    file_input.onchange = function() {
+        // Choosing a file implies building from it.
+        if (file_input.files.length > 0) load_exe_radio.checked = true
+        onSourceChange()
+    }
+    load_exe_radio.onchange = onSourceChange
+    load_vanilla_radio.onchange = onSourceChange
+
+    // Drag and drop onto the drop zone.
+    const hasFiles = (event) => event.dataTransfer && Array.from(event.dataTransfer.types || []).includes("Files")
+    let drag_depth = 0
+    drop_zone.addEventListener("dragenter", (event) => {
+        if (!hasFiles(event)) return
+        event.preventDefault()
+        drag_depth++
+        drop_zone.classList.add("dragging")
+    })
+    drop_zone.addEventListener("dragleave", () => {
+        drag_depth = Math.max(0, drag_depth - 1)
+        if (drag_depth == 0) drop_zone.classList.remove("dragging")
+    })
+    drop_zone.addEventListener("drop", (event) => {
+        drag_depth = 0
+        drop_zone.classList.remove("dragging")
+        const files = event.dataTransfer && event.dataTransfer.files
+        if (!files || files.length == 0 || file_input.disabled) return
+        file_input.files = files
+        file_input.onchange()
+    })
+    // Don't let a file dropped next to the zone replace the page.
+    window.addEventListener("dragover", (event) => {
+        if (hasFiles(event)) event.preventDefault()
+    })
+    window.addEventListener("drop", (event) => {
+        if (hasFiles(event)) event.preventDefault()
+    })
+
+    build_button.onclick = guarded(async function() {
+        build_button.disabled = true
+        file_input.disabled = true;
+        version_name_input.disabled = true;
+
         try {
-            build_button.disabled = true
-            file_input.parentElement.classList.add("disabled")
-            file_input.disabled = true;
-            version_name_input.disabled = true;
-            
             let file;
             if (load_exe_radio.checked) {
                 file = file_input.files[0]
-                if (!file) throw new Error("No file inputted")
-                const name = file.name
+                if (!file) throw new Error("Choose your Balatro.exe or .love file first.")
             } else {
                 file = await loadCachedGame()
+                if (!file) throw new Error("The 'vanilla' version is missing. Build it from Balatro.exe first.")
             }
 
-            let name = version_name_input.value
+            // An empty name falls back to the placeholder ("vanilla", or "Modded" when mods are added).
+            const name = (version_name_input.value || version_name_input.placeholder).trim()
 
             if (!name) {
-                showError("No name provided for the build. Aborting.")
-                return
+                throw new Error("No name provided for the build.")
             }
 
-            if (Object.keys(mods).length > 0) {
-                if (name == "vanilla") {
-                    if (!confirm("DANGEROUS! Overwrite the 'vannila' build? This can break subsequent builds using the cached vanilla, but this will also let you create default mods for new versions.")) {
-                        return
-                    }
+            const has_mods = Object.keys(mods).length > 0
+            const exists = (await listCachedVersions()).indexOf(name) != -1
+
+            if (has_mods && name == "vanilla") {
+                if (!confirm("Overwrite the 'vanilla' build with a modded one? \"Use Vanilla\" builds will then include these mods too.")) {
+                    return
                 }
-            } else {
-                if (!name) {
-                    version_name_input.value = "vanilla"
-                    name = "vanilla"
+            } else if (exists) {
+                if (!confirm("A version named '" + name + "' already exists. Overwrite it? Its save data is kept.")) {
+                    return
                 }
-                if (name != "vanilla") {
-                    if (!confirm("Create a new version without mods, which is not called vanilla? This is redundant unless you want more save slots.")) {
-                        return
-                    }
+            } else if (!has_mods && name != "vanilla") {
+                if (!confirm("Create an unmodded version called '" + name + "'? This is only useful as an extra save slot. Use the name 'vanilla' to enable \"Use Vanilla\" for modded builds.")) {
+                    return
                 }
             }
 
-            game = await buildFromSource(file, mods);
+            const game = await buildFromSource(file, mods);
 
-            progress_bar.value = "95"
-            status_text.innerText = "Saving to Cache"
-
+            setStatus("Saving to cache", 95)
             await saveGameToCache(game, name);
+            await requestPersistentStorage()
 
-            progress_bar.value = "100"
-            status_text.innerText = "Done"
+            await renderVersionList()
+            await loadVersion(name)
 
-            build_button.classList.remove("hidden")
-
-            setTimeout(() => {
-                progress_bar.value = "0"
-            }, 1000)
-
-            renderVersionList()
-            
-        } catch (err) {
-            progress_bar.classList.add("hidden")
-            showError(err instanceof Error ? err.message : String(err))
-            console.error(err)
+            return "Built '" + name + "'. Click Play to start."
         } finally {
-            build_button.disabled = false
-            file_input.parentElement.classList.remove("disabled")
             file_input.disabled = false;
             version_name_input.disabled = false;
+            checkBuildButton()
         }
-    });
+    })
 
-    // build_button.addEventListener("click", function() {
-    //     var s = document.createElement('script');
-    //     s.type = 'text/javascript';
-    //     s.src = "single_file.js"; // THICC FILE
-    //     s.async = true;
-    //     s.onload = async function () {
-    //         const game_uri = await getDataURIFromBlob(game)
-
-    //         const zip = new JSZip()
-    //         for (const file_name of Object.keys(window.templates)) {
-    //             zip.file(file_name, window.templates[file_name].replace("%%DATAURI%%", game_uri))
-    //         }
-    //         saveAs(await zip.generateAsync({type: "blob"}), "balatro.zip")
-    //     };
-    //     document.body.appendChild(s);
-    // })
-    
     try {
+        const versions = await listCachedVersions()
         await renderVersionList()
-        status_text.innerText = "Ready"
+
+        // Returning visitors: pre-load the last used version (or the only one).
+        const remembered = getRememberedVersion()
+        const initial = versions.indexOf(remembered) != -1 ? remembered : versions.length == 1 ? versions[0] : null
+        if (initial) await loadVersion(initial)
+
+        setStatus(versions.length == 0 ? "Ready. Choose your Balatro.exe to get started." : "Ready")
     } catch (err) {
-        showError(err.message)
+        console.error(err)
+        setStatus("Could not read cached versions")
+        showError(err instanceof Error ? err.message : String(err))
     }
 })

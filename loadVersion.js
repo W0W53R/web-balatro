@@ -1,31 +1,57 @@
-
-/**
- * 
- * @param {IDBRequest} idbRequest - A request to unwrap
- * @returns {Promise<any>} - The output of the IDBRequest
- */
-function unwrapIDBRequest(idbRequest) {
-    return new Promise((res, rej) => {
-        idbRequest.onsuccess = function(event) {
-            res(event.result)
-        }
-        idbRequest.onerror = function() {
-            rej()
-        }
-    })
-}
-
-/** @type {string} - The IndexedDB ID of the currently loaded game */
+/** @type {string | null} - The IndexedDB ID of the currently loaded game */
 let loaded_game_id = null;
 
+const LAST_VERSION_KEY = "web-balatro:lastVersion"
+
+/** Remember (or forget) the loaded version so it's selected on the next visit. */
+function rememberLoadedVersion(versionId) {
+    try {
+        if (versionId) {
+            localStorage.setItem(LAST_VERSION_KEY, versionId)
+        } else {
+            localStorage.removeItem(LAST_VERSION_KEY)
+        }
+    } catch {
+        // Storage may be unavailable (e.g. blocked cookies); this is only a convenience.
+    }
+}
+
+function getRememberedVersion() {
+    try {
+        return localStorage.getItem(LAST_VERSION_KEY)
+    } catch {
+        return null
+    }
+}
+
+/** Make a string safe to use as a download file name. */
+function safeFileName(name) {
+    return name.replace(/[\\/:*?"<>|\x00-\x1f]/g, "_")
+}
+
 /**
- * 
- * @param {string} versionId - The IndexedDB ID of the version to load
+ * Fill in the portable player's placeholders.
+ *
+ * @param {string} template
+ * @param {string} game_uri
+ * @param {string} version
+ */
+function fillPortableTemplate(template, game_uri, version) {
+    // Inserted into a double-quoted JS string inside a <script> tag.
+    const js_name = JSON.stringify(version).slice(1, -1).replace(/</g, "\\u003c")
+    const html_name = version.replace(/[&<>"']/g, (c) => "&#" + c.charCodeAt(0) + ";")
+    // Function replacers, so "$" in the inputs is never treated as a pattern.
+    return template
+        .replace("%%DATAURI%%", () => game_uri)
+        .replaceAll("%%VERSION_NAME%%", () => js_name)
+        .replaceAll("%%VERSION_TITLE%%", () => html_name)
+}
+
+/**
+ *
+ * @param {string | null} versionId - The IndexedDB ID of the version to load, or null to unload.
  */
 async function loadVersion(versionId) {
-    const progress_bar = $("progressBar")
-    const status_text = $("status")
-
     const loaded_version_name = $("loadedName")
 
     const run_button = $("runBtn")
@@ -36,16 +62,19 @@ async function loadVersion(versionId) {
     const save_upload = $("save-upload")
     const save_delete = $("save-delete")
 
+    const buttons = [run_button, download_cache_button, make_portable_button, save_download, save_upload, save_delete]
+
     if (!versionId) {
         loaded_version_name.innerText = "Nothing loaded"
-
-        run_button.disabled = true;
-        download_cache_button.disabled = true;
-        make_portable_button.disabled = true;
-
-        save_download.disabled = true;
-        save_upload.disabled = true;
-        save_delete.disabled = true;
+        for (const button of buttons) {
+            button.disabled = true
+            button.onclick = null
+        }
+        loaded_game_id = null;
+        rememberLoadedVersion(null)
+        $("playerHint").hidden = false;
+        highlightLoadedVersion()
+        return
     }
 
     /** @type {string[]} */
@@ -54,325 +83,102 @@ async function loadVersion(versionId) {
         throw new Error("Unknown version '" + versionId + "'")
     }
     loaded_game_id = versionId;
+    rememberLoadedVersion(versionId)
 
     loaded_version_name.innerText = loaded_game_id
+    $("playerHint").hidden = true;
+    highlightLoadedVersion()
 
-    run_button.disabled = false;
-
-    run_button.onclick = function() {
-        runVersion(loaded_game_id)
+    for (const button of buttons) {
+        button.disabled = false
     }
 
-    download_cache_button.disabled = false;
+    run_button.onclick = guarded(async function() {
+        await runVersion(loaded_game_id)
+    })
 
-    download_cache_button.onclick = async function() {
-        status_text.innerText = "Loading Game"
-        progress_bar.value = 0;
+    download_cache_button.onclick = guarded(async function() {
+        setStatus("Loading game", 0)
 
         const game = await loadCachedGame(loaded_game_id)
+        if (!game) throw new Error("Version '" + loaded_game_id + "' is missing from the cache.")
 
-        status_text.innerText = "Saving"
-        progress_bar.value = 50;
+        setStatus("Saving", 50)
+        saveAs(game, "balatro_" + safeFileName(loaded_game_id) + ".love")
+    })
 
-        saveAs(game, "balatro_" + loaded_game_id + ".zip")
-
-        status_text.innerText = "Ready"
-        progress_bar.value = 0;
-    }
-
-    make_portable_button.disabled = false;
-
-    make_portable_button.onclick = async function() {
+    make_portable_button.onclick = guarded(async function() {
         const game = await loadCachedGame(loaded_game_id)
+        if (!game) throw new Error("Version '" + loaded_game_id + "' is missing from the cache.")
 
-        status_text.innerText = "Fetching Template"
-        progress_bar.value = 0;
-        var s = document.createElement('script');
-        s.type = 'text/javascript';
-        s.src = "single_file.js"; // THICC FILE
-        s.async = true;
-        s.onload = async function () {
-            status_text.innerText = "Filling Template"
-            progress_bar.value = 30;
-            const game_uri = await getDataURIFromBlob(game)
+        setStatus("Fetching template (≈7 MB)", 0)
+        if (!window.templates) {
+            await new Promise((resolve, reject) => {
+                var s = document.createElement('script');
+                s.type = 'text/javascript';
+                s.src = "single_file.js"; // THICC FILE
+                s.async = true;
+                s.onload = resolve;
+                s.onerror = () => reject(new Error("Could not load the portable player template (single_file.js). Check your connection and try again."));
+                document.body.appendChild(s);
+            })
+        }
 
-            const zip = new JSZip()
-            for (const file_name of Object.keys(window.templates)) {
-                progress_bar.value += 20;
-                zip.file(file_name, window.templates[file_name].replace("%%DATAURI%%", game_uri).replace("%%VERSION_NAME%%", loaded_game_id))
-            }
-            status_text.innerText = "Zipping"
-            progress_bar.value = 95;
-            saveAs(await zip.generateAsync({type: "blob"}), "balatro.zip")
-            
-            status_text.innerText = "Ready"
-            progress_bar.value = 0;
-        };
-        document.body.appendChild(s);
-    }
+        setStatus("Filling template", 30)
+        const game_uri = await getDataURIFromBlob(game)
 
+        const zip = new JSZip()
+        for (const file_name of Object.keys(window.templates)) {
+            zip.file(file_name, fillPortableTemplate(window.templates[file_name], game_uri, loaded_game_id))
+        }
+        setStatus("Zipping", 70)
+        const blob = await zip.generateAsync({type: "blob"}, (meta) => setStatus(undefined, 70 + meta.percent * 0.25))
+        saveAs(blob, "balatro_" + safeFileName(loaded_game_id) + "_portable.zip")
+    })
 
-    save_download.disabled = false;
+    save_download.onclick = guarded(async function() {
+        setStatus("Reading save data", 20)
+        const blob = await exportSave(loaded_game_id)
+        if (!blob) {
+            showMessage("No save data yet", "There is no save data for '" + loaded_game_id + "' yet. Click Play and play for a bit first.")
+            return
+        }
+        setStatus("Downloading", 90)
+        saveAs(blob, "balatro_" + safeFileName(loaded_game_id) + "_save_data.zip")
+    })
 
-    save_download.onclick = async function() {
-        const save_data_id = "Balatro_" + loaded_game_id + "_/home/web_user/love"
+    // Pick the file before entering the guarded (busy) section, so a picker that
+    // never reports cancellation can't leave the page stuck in the busy state.
+    const upload_save = guarded(async function(file) {
+        setStatus("Reading zip", 20)
+        const records = await parseSaveZip(file)
 
-        const zip = new JSZip();
-
-        
-        status_text.innerText = "Opening Save Database"
-        progress_bar.value = 0;
-
-        // Open the IndexedDB database
-        const request = indexedDB.open(save_data_id);
-        /** @type {IDBDatabase} */
-        const db = await new Promise((resolve, reject) => {
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
-
-        // Open the "FILE_DATA" object store
-        const tx = db.transaction('FILE_DATA', 'readonly');
-        const store = tx.objectStore('FILE_DATA');
-
-        status_text.innerText = "Reading database files"
-        progress_bar.value = 10;
-
-        // Read all files from the store
-        const files = await new Promise((resolve, reject) => {
-            const allFiles = {};
-            const cursorRequest = store.openCursor();
-
-            cursorRequest.onsuccess = (event) => {
-            const cursor = event.target.result;
-            if (cursor) {
-                const path = cursor.key.replace("/home/web_user/love/game/", "");
-                const metadata = cursor.value;
-                if (metadata.contents) {
-                    allFiles[path] = new Blob([metadata.contents]);
-                }
-                cursor.continue();
-            } else {
-                resolve(allFiles);
-            }
-            };
-            cursorRequest.onerror = () => reject(cursorRequest.error);
-        });
-
-        db.close()
-
-        const step_size = 50 / Object.entries(files).length
-
-        // Add each file to the zip
-        for (const [path, blob] of Object.entries(files)) {
-            if (blob instanceof Blob) {
-                status_text.innerText = "Zipping " + path
-                progress_bar.value += step_size;
-                zip.file(path, blob, {createFolders: true});
+        setStatus("Checking current save", 50)
+        const existing = await readSaveFiles(loaded_game_id)
+        if (Object.keys(existing).length > 0) {
+            if (!confirm("Replace the current save data for '" + loaded_game_id + "'? Download it first if you want a backup.")) {
+                return
             }
         }
 
-        status_text.innerText = "Zipping"
-        progress_bar.value = 75;
-
-        const zipBlob = await zip.generateAsync({ type: 'blob' });
-
-        status_text.innerText = "Downloading"
-        progress_bar.value = 90;
-
-        saveAs(zipBlob, `balatro_${loaded_game_id}_save_data.zip`)
-
-        status_text.innerText = "Ready"
-        progress_bar.value = 0;
-    }
-
-    save_upload.disabled = false;
+        setStatus("Writing save data", 80)
+        await writeSaveRecords(loaded_game_id, records)
+        return "Save data uploaded"
+    })
 
     save_upload.onclick = async function() {
-
-        status_text.innerText = "Reqesting Save Data"
-        progress_bar.value = 0;
-
-        /** @type {FileSystemFileHandle[]} */
-        const fileHandles = await showOpenFilePicker({
-            id: "balatro_save",
-            types: [
-                {
-                    description: "Zipped Archives",
-                    accept: {
-                        "application/zip": [".zip"]
-                    }
-                }
-            ],
-            excludeAcceptAllOption: true,
-            multiple: false,
-        })
-
-        if (fileHandles.length == 0) {
-            // Silently ignore if user cancels
-            return;
-        }
-
-        const fileHandle = fileHandles[0]
-
-        const fileBlob = await fileHandle.getFile()
-
-        status_text.innerText = "Extracting Zip"
-        progress_bar.value = 0;
-
-        const zipFile = await JSZip.loadAsync(fileBlob)
-
-        const DIR_PERMS = 16832
-        const FILE_PERMS = 33152
-        const SETTINGS_PERMS = 33206
-
-        const save_data_id = "Balatro_" + loaded_game_id + "_/home/web_user/love"
-
-        status_text.innerText = "Opening Save Database"
-        progress_bar.value = 20;
-
-        const request = indexedDB.open(save_data_id);
-        /** @type {IDBDatabase} */
-        const db = await new Promise((resolve, reject) => {
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
-
-        db.onerror = console.error
-
-        const zip_contents = {}
-
-        status_text.innerText = "Scanning save data"
-        progress_bar.value = 40;
-
-        for (const file of Object.values(zipFile.files)) {
-            if (file.name.endsWith("/")) {
-                file.name = file.name.slice(0, -1)
-            }
-            if (file.dir) {
-                zip_contents["/home/web_user/love/game/" + file.name] = {
-                    mode: DIR_PERMS,
-                    timestamp: file.date
-                }
-            } else {
-                const arrayBuffer = await zipFile.file(file.name).async("arrayBuffer")
-
-                const contents = new Int8Array(arrayBuffer)
-
-                zip_contents["/home/web_user/love/game/" + file.name] = {
-                    mode: file.name == "settings.jkr" ? SETTINGS_PERMS : FILE_PERMS,
-                    timestamp: file.date,
-                    contents: contents
-                }
-            }
-        }
-
-        // Open the "FILE_DATA" object store
-        let tx = db.transaction('FILE_DATA', 'readwrite');
-        let store = tx.objectStore('FILE_DATA');
-
-        status_text.innerText = "Clearing cache"
-        progress_bar.value = 60;
-
-        await new Promise((resolve, reject) => {
-            const cursorRequest = store.openCursor();
-
-            cursorRequest.onsuccess = async (event) => {
-                /** @type {IDBCursorWithValue} */
-                const cursor = event.target.result;
-                if (cursor) {
-                    await unwrapIDBRequest(store.delete(cursor.key))
-
-                    cursor.continue();
-                } else {
-                    resolve();
-                }
-            };
-            cursorRequest.onerror = () => reject(cursorRequest.error);
-        });
-        
-        tx = db.transaction('FILE_DATA', 'readwrite');
-
-        tx.onerror = console.error
-
-        store = tx.objectStore('FILE_DATA');
-
-        status_text.innerText = "Writing save to cache"
-        progress_bar.value = 80;
-        
-        store.add({
-            mode: DIR_PERMS,
-            timestamp: new Date()
-        }, "/home/web_user/love/game")
-
-        const promises = []
-
-        for (const [name, data] of Object.entries(zip_contents)) {
-            store.add(data, name)
-        }
-
-        await Promise.all(promises);
-
-        status_text.innerText = "Cleaning Up"
-        progress_bar.value = 100;
-
-        db.close()
-
-        status_text.innerText = "Ready"
-        progress_bar.value = 0;
+        if (busy) return
+        const file = await pickZipFile()
+        if (file) await upload_save(file)
     }
 
-    save_delete.disabled = false;
-
-    save_delete.onclick = async function() {
-
-        status_text.innerText = "Aquiring confirmation"
-        progress_bar.value = 0;
-
-        await Promise.resolve()
-
-        if (!confirm("Delete ALL save data for version '" + loaded_game_id + "'?")) {
-            status_text.innerText = "Ready"
-            progress_bar.value = 0;
+    save_delete.onclick = guarded(async function() {
+        if (!confirm("Delete ALL save data for version '" + loaded_game_id + "'? This cannot be undone.")) {
             return
         }
 
-        const save_data_id = "Balatro_" + loaded_game_id + "_/home/web_user/love"
-
-        status_text.innerText = "Opening Save Database"
-        progress_bar.value = 40;
-
-        const request = indexedDB.open(save_data_id);
-        /** @type {IDBDatabase} */
-        const db = await new Promise((resolve, reject) => {
-            request.onsuccess = () => resolve(request.result);
-            request.onerror = () => reject(request.error);
-        });
-
-        let tx = db.transaction('FILE_DATA', 'readwrite');
-        let store = tx.objectStore('FILE_DATA');
-
-        status_text.innerText = "Clearing Files"
-        progress_bar.value = 80;
-
-        await new Promise((resolve, reject) => {
-            const cursorRequest = store.openCursor();
-
-            cursorRequest.onsuccess = async (event) => {
-                /** @type {IDBCursorWithValue} */
-                const cursor = event.target.result;
-                if (cursor) {
-                    await unwrapIDBRequest(store.delete(cursor.key))
-
-                    cursor.continue();
-                } else {
-                    resolve();
-                }
-            };
-            cursorRequest.onerror = () => reject(cursorRequest.error);
-        });
-
-        status_text.innerText = "Ready"
-        progress_bar.value = 0;
-    }
+        setStatus("Deleting save data", 50)
+        await clearSaveFiles(loaded_game_id)
+        return "Save data deleted"
+    })
 }

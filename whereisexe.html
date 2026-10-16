@@ -1,17 +1,46 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
     <head>
-        <title>Web Balatro | Where is the .exe file?</title>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="color-scheme" content="dark" />
+        <title>Where is Balatro.exe? | Balatro on the Web</title>
+        <meta name="description" content="How to find Balatro.exe and your save folder so you can play Balatro in the browser." />
+        <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='6' y='2' width='20' height='28' rx='3' fill='%23111' stroke='%2366fcf1' stroke-width='2'/%3E%3Cpath d='M16 9l5 7-5 7-5-7z' fill='%23e74c3c'/%3E%3C/svg%3E" />
         <link rel="stylesheet" href="style.css" />
     </head>
     <body>
         <div class="container">
-            <section>
-                <h1>Where is the .exe file?</h1>
-                <h2>Steam (Windows, Linux, Mac)</h2>
-                <p>If you have installed Balatro through Steam, open the game's install directory through the Steam UI. Right click the game, click 'Manage', then click 'Browse Local Files'. The 'Balatro.exe' file will be in the opened folder.</p>
+            <p><a href="index.html">&larr; Back to Balatro on the Web</a></p>
+            <section aria-labelledby="exeHeading">
+                <h1 id="exeHeading">Where is the .exe file?</h1>
+
+                <h2>Steam (Windows, Linux, Steam Deck)</h2>
+                <p>In your Steam library, right click Balatro, click <strong>Manage</strong>, then <strong>Browse local files</strong>. <code>Balatro.exe</code> is in the folder that opens. The default locations are:</p>
+                <ul>
+                    <li>Windows: <code>C:\Program Files (x86)\Steam\steamapps\common\Balatro\Balatro.exe</code></li>
+                    <li>Linux / Steam Deck: <code>~/.local/share/Steam/steamapps/common/Balatro/Balatro.exe</code></li>
+                </ul>
+
+                <h2>Steam (macOS)</h2>
+                <p>Open the game's folder the same way. The game is packaged as <code>Balatro.app</code>: right click it, choose <strong>Show Package Contents</strong>, and open <code>Contents/Resources</code>. Pick the <code>.love</code> file in there.</p>
+
+                <h2>Other stores</h2>
+                <p>Some stores (such as the Xbox app / PC Game Pass) protect their game files, so they can't be used here.</p>
+
                 <h2>Mobile / Console</h2>
-                <p>Accessing the game files on mobile or on console would required a rooted device.</p>
+                <p>Accessing the game files on mobile or on console requires a rooted or jailbroken device.</p>
+            </section>
+
+            <section aria-labelledby="saves">
+                <h2 id="saves">Moving your desktop save</h2>
+                <p>You can import a save from the desktop game. Zip the save folder (or the files inside it), then load a version on the main page and use <strong>Save Data &rarr; Upload</strong>.</p>
+                <ul>
+                    <li>Windows: <code>%AppData%\Balatro</code></li>
+                    <li>macOS: <code>~/Library/Application Support/Balatro</code></li>
+                    <li>Linux / Steam Deck (Proton): <code>~/.local/share/Steam/steamapps/compatdata/2379780/pfx/drive_c/users/steamuser/AppData/Roaming/Balatro</code></li>
+                </ul>
+                <p class="hint">The folder contains <code>settings.jkr</code> and numbered profile folders (<code>1</code>, <code>2</code>, <code>3</code>). Saves made here can be downloaded and copied back the same way.</p>
             </section>
         </div>
     </body>

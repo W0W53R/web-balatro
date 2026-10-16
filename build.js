@@ -8,7 +8,7 @@ function string_searchAll(string, regex) {
 
     let nextRegex = regex
     while (true) {
-        result = string.search(new RegExp(nextRegex))
+        const result = string.search(new RegExp(nextRegex))
         if (result == -1) {
             break
         }
@@ -32,19 +32,23 @@ async function buildFromSource(blob, mods) {
     status_text.innerText = "Finding Source"
 
     const buffer = await blob.arrayBuffer()
-    const reader = new BufferReader(buffer)
+    const bytes = new Uint8Array(buffer)
 
-    // Search for "PK\x03\x04"
-    // Not many ways to do this better.
-    // Works for .zip archives bc they start with PK\3\4
-    while (true) {
-        if (reader.string(4) === "PK\x03\x04") break
-        reader.step(-3)
+    // Balatro.exe is the LÖVE runtime with the game's .love (a zip) appended,
+    // so find the first local file header ("PK\x03\x04"). A .love file starts with one.
+    let start = -1
+    for (let i = 0; i + 3 < bytes.length; i++) {
+        if (bytes[i] === 0x50 && bytes[i + 1] === 0x4b && bytes[i + 2] === 0x03 && bytes[i + 3] === 0x04) {
+            start = i
+            break
+        }
+    }
+    if (start == -1) {
+        throw new Error("'" + (blob.name || "That file") + "' doesn't contain any game data. Choose Balatro.exe from the game's install folder, or a .love file.")
     }
 
     progress_bar.value = "30"
-    reader.step(-4)
-    const pkfile = reader.bytes(reader.view.byteLength - reader.offset)
+    const pkfile = buffer.slice(start)
 
     /**
      * 
@@ -52,11 +56,11 @@ async function buildFromSource(blob, mods) {
      * @returns {Promise<string>} Contents of file
      */
     function get_file(path) {
-        let current = zipfile
-        for (const chunk of path.split("/").slice(0, -1)) {
-            current = zipfile.folder(chunk)
+        const file = zipfile.file(path)
+        if (!file) {
+            throw new Error("A mod tried to patch '" + path + "', which doesn't exist in this version of the game.")
         }
-        return current.file(path.split("/").at(-1)).async("string")
+        return file.async("string")
     }
 
     /**
@@ -68,7 +72,10 @@ async function buildFromSource(blob, mods) {
         let current = mods[mod]
         const chunks = path.split("/")
         for (const chunk of chunks) {
-            current = current[chunk]
+            current = current && current[chunk]
+        }
+        if (!(current instanceof Blob)) {
+            throw new Error("Mod '" + mod + "' references '" + path + "', which is missing from the mod folder.")
         }
         /** @type {File} */
         const file = current;
@@ -90,7 +97,16 @@ async function buildFromSource(blob, mods) {
 
     progress_bar.value = "40"
     status_text.innerText = "Extracting zip"
-    const zipfile = await JSZip.loadAsync(new Blob([pkfile]))
+    let zipfile
+    try {
+        zipfile = await JSZip.loadAsync(new Blob([pkfile]))
+    } catch (err) {
+        console.error(err)
+        throw new Error("Couldn't read the game data in '" + (blob.name || "that file") + "'. Make sure it's an unmodified Balatro.exe or .love file.")
+    }
+    if (!zipfile.file("main.lua") || !zipfile.file("globals.lua")) {
+        throw new Error("'" + (blob.name || "That file") + "' doesn't look like Balatro. Choose Balatro.exe from the game's install folder, or a .love file.")
+    }
 
     // THE TYPE!
     /** @type {Array<{name: string, src: {manifest: {version: string, dump_lua: boolean, priority: number}, patches: {pattern: {target: string, pattern: string, position: 'before'|'at'|'after', payload: string, match_indent: boolean}, regex: {target: string, pattern: string, position: string, line_prepend: string, payload: string}, module: {source: string, before: string, name: string}, copy: {target: string, position: string, sources: string[]}}[]}, vars: [Object<String, String>] }>} */
@@ -136,8 +152,11 @@ async function buildFromSource(blob, mods) {
         }
         for (const file of tomls) {
             try {
+                const src = toml.parse(await file.toml.text())
+                src.manifest = src.manifest || {}
+                src.patches = src.patches || []
                 patch_list.push({
-                    src: toml.parse(await file.toml.text()),
+                    src: src,
                     name: name,
                     dont_patch: mod["dont_patch.txt"] ? true : false,
                 })
@@ -149,7 +168,9 @@ async function buildFromSource(blob, mods) {
     }
 
     patch_list.sort((a, b) => {
-        return a.src.manifest.priority > b.src.manifest.priority ? -1 : a.src.manifest.priority == b.src.manifest.priority ? 0 : 1
+        const pa = a.src.manifest.priority || 0
+        const pb = b.src.manifest.priority || 0
+        return pa > pb ? -1 : pa == pb ? 0 : 1
     })
 
     let modules_to_load = {}
@@ -313,15 +334,13 @@ async function buildFromSource(blob, mods) {
         }
     }
 
-    mods_without_dump = {}
+    const mods_without_dump = {}
 
     for (const [mod_name, mod_data] of Object.entries(mods)) {
         if (mod_name != "Dump from Lovely") {
             mods_without_dump[mod_name] = mod_data
         }
     }
-
-    console.log(mods_without_dump)
 
     move_dir(mods_without_dump, "Mods/")
 

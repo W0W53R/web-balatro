@@ -30,13 +30,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
+      - name: Check JavaScript syntax
+        run: for f in *.js lib/*.js run/*/*.js; do node --check "$f"; done
       - name: Setup Pages
         uses: actions/configure-pages@v5
       - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+        uses: actions/upload-pages-artifact@v4
         with:
-          # Upload entire repository
+          # The site is static and needs no build step: upload the repository
+          # as-is (v4 leaves out dotfiles such as .git and .github).
           path: '.'
       - name: Deploy to GitHub Pages
         id: deployment

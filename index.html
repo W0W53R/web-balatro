@@ -4,13 +4,22 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Balatro on the Web</title>
+    <link rel="preload" href="fonts/PixelifySans-latin.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="stylesheet" href="style.css" />
-    <script src="lib/data.js"></script>
+    <meta name="color-scheme" content="dark" />
+    <meta name="description" content="Play Balatro in your browser using your own copy of the game. Your game files never leave your device." />
+    <meta name="theme-color" content="#1b2326" />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Balatro on the Web" />
+    <meta property="og:description" content="Play Balatro in your browser using your own copy of the game. Your game files never leave your device." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='6' y='2' width='20' height='28' rx='3' fill='%23fff' stroke='%23fe5f55' stroke-width='2'/%3E%3Cpath d='M16 9l5 7-5 7-5-7z' fill='%23fe5f55'/%3E%3C/svg%3E" />
+    <script src="ui.js"></script>
     <script src="lib/FileSaver.min.js"></script>
     <script src="lib/jszip.min.js"></script>
     <script src="lib/toml.js"></script>
     <script src="renderVersionList.js"></script>
     <script src="runVersion.js"></script>
+    <script src="saves.js"></script>
     <script src="loadVersion.js"></script>
     <script src="mods.js"></script>
     <script src="patches.js"></script>
@@ -18,97 +27,122 @@
     <script src="build.js"></script>
     <script src="app.js"></script>
   </head>
-  <body>
+  <body class="no-versions">
+    <canvas id="bg" aria-hidden="true"></canvas>
     <div class="container">
-      <h1>Balatro</h1>
+      <header class="hero">
+        <h1 class="logo">Balatro</h1>
+        <p class="tagline">in your browser, with your own copy of the game</p>
+        <ol class="steps">
+          <li><span class="step-num">1</span> Choose <strong>Balatro.exe</strong></li>
+          <li><span class="step-num">2</span> Click <strong>Build</strong></li>
+          <li><span class="step-num">3</span> Click <strong>Play</strong></li>
+        </ol>
+        <noscript><p class="notice">This site needs JavaScript to run.</p></noscript>
+      </header>
 
-      <section>
-        <h2>New Version</h2>
-        <div class="options">
-          <label><input type="radio" name="source" value="file" checked id="loadExeRadio"/> Load .exe or .love</label><a href="whereisexe.html">(?)</a>&nbsp;<input type="file" id="exeInput"><br>
-          <label><input type="radio" name="source" value="vanilla" disabled id="loadVanillaRadio"/> Use Vanilla</label>
-        </div>
-        
-        <h3>Mods</h3>
-        <div class="addMods">
-          <button id="addModDir">Add Mod Folder</button>
-          <button id="clearMods">Clear Mods</button>
-          <button id="useLovelyDump">Use Lovely Dump</button>
-          <h4>Mods Found:</h4>
-          <div class="leftAlign" id="mod-list"></div>
-        </div>
-        <div class="makeName">
-          <label for="makeName">Name: </label><input id="makeName" placeholder="vanilla">
-        </div>
-        <div class="center">
-          <button id="parseBtn" disabled>Build</button>
-        </div>
-        <progress id="progressBar" value="0" max="100" class="progress hidden"></progress>
-        <div class="center">
-          <p id="status">Loading Cache</p>
-        </div>
-      </section>
+      <main class="layout">
+        <section class="panel panel-play" aria-labelledby="playerHeading">
+          <h2 id="playerHeading" class="tag tag-red">Play</h2>
+          <p class="now-loaded">
+            <span class="label">Loaded version</span>
+            <strong id="loadedName">Nothing loaded</strong>
+          </p>
+          <p class="hint" id="playerHint">Click “Load” on one of your versions.</p>
+          <button id="runBtn" class="btn btn-red btn-xl" disabled>Play</button>
+          <div class="btn-row">
+            <button id="downloadCachedBtn" class="btn btn-blue btn-sm" disabled>Download .love</button>
+            <button id="makePortableBtn" class="btn btn-blue btn-sm" disabled>Make portable</button>
+          </div>
 
-      <section>
-        <h2>Player</h2>
-        <div class="player-controls">
-          <p id="loadedName">Nothing loaded</p>
-          <button id="runBtn" disabled>Start Game</button>
-          <button id="downloadCachedBtn" disabled>Download Version</button>
-          <button id="makePortableBtn" disabled>Make Portable</button>
-        </div>
-      </section>
+          <div class="subpanel">
+            <h3>Save data</h3>
+            <p class="hint">Saves live in this browser. Download a backup before clearing site data. Upload takes a zip from Download or your desktop save folder (<a href="whereisexe.html#saves" target="_blank" rel="noopener">where is it?</a>).</p>
+            <div class="btn-row">
+              <button disabled id="save-download" class="btn btn-green btn-sm">Download</button>
+              <button disabled id="save-upload" class="btn btn-green btn-sm">Upload</button>
+              <button disabled id="save-delete" class="btn btn-danger btn-sm">Delete</button>
+            </div>
+          </div>
+        </section>
 
-      <section>
-        <h2>Save Data</h2>
-        <button disabled id="save-download">Download</button>
-        <button disabled id="save-upload">Upload</button>
-        <button disabled id="save-delete">Delete</button>
-      </section>
+        <section class="panel panel-versions" aria-labelledby="versionsHeading">
+          <h2 id="versionsHeading" class="tag tag-blue">Your versions</h2>
+          <ul id="versionsList" class="version-list"></ul>
+        </section>
 
-      <section>
-        <h2>Versions</h2>
-        <table>
-          <thead>
-            <tr>
-              <th>Name</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody id="versionsList">
-          </tbody>
-        </table>
-      </section>
+        <section class="panel panel-build" aria-labelledby="newVersionHeading">
+          <h2 id="newVersionHeading" class="tag tag-orange">Build a version</h2>
 
-      <!-- Error Modal -->
-      <div id="errorModal" class="modal hidden">
-        <div class="modal-content">
-          <span id="closeModal" class="close">&times;</span>
-          <h2>Error</h2>
-          <p id="errorMessage">Something went wrong.</p>
-        </div>
+          <div class="segmented" role="radiogroup" aria-label="Build from">
+            <label class="segment">
+              <input type="radio" name="source" value="file" checked id="loadExeRadio" />
+              <span>From a file</span>
+            </label>
+            <label class="segment">
+              <input type="radio" name="source" value="vanilla" disabled id="loadVanillaRadio" />
+              <span>From “vanilla”</span>
+            </label>
+          </div>
+          <p class="hint" id="vanillaHint">“From vanilla” unlocks once you have a version named <em>vanilla</em>. It lets you build modded versions without choosing the file again.</p>
+
+          <label class="dropzone" id="dropZone">
+            <input type="file" id="exeInput" accept=".exe,.love,.zip" />
+            <svg class="dz-icon" viewBox="0 0 40 52" aria-hidden="true">
+              <rect x="2" y="2" width="36" height="48" rx="5" />
+              <path d="M20 14l8 12-8 12-8-12z" />
+            </svg>
+            <span class="dz-title" id="dropTitle">Drop Balatro.exe here</span>
+            <span class="dz-sub" id="dropSub">or click to browse (.exe or .love)</span>
+          </label>
+          <p class="hint center-text"><a href="whereisexe.html" target="_blank" rel="noopener">Where is Balatro.exe?</a></p>
+
+          <details class="mods" id="modsDetails">
+            <summary>Mods <span class="badge" id="modCount" hidden></span> <span class="hint">optional, advanced</span></summary>
+            <div class="mods-body">
+              <div class="btn-row">
+                <button id="addModDir" class="btn btn-blue btn-sm">Add mod folder</button>
+                <button id="useLovelyDump" class="btn btn-blue btn-sm">Use Lovely dump</button>
+                <button id="clearMods" class="btn btn-grey btn-sm">Clear</button>
+              </div>
+              <p class="hint" id="modSupportHint" hidden>Folder picking isn’t supported in this browser. Use a Chromium-based browser (Chrome, Edge) to add mods.</p>
+              <div id="mod-list" aria-live="polite"></div>
+            </div>
+          </details>
+
+          <div class="name-row">
+            <label for="makeName">Name</label>
+            <input id="makeName" type="text" placeholder="vanilla" autocomplete="off" spellcheck="false" />
+          </div>
+
+          <button id="parseBtn" class="btn btn-orange btn-lg" disabled>Build</button>
+        </section>
+      </main>
+
+      <div class="statusbar">
+        <p id="status" role="status" aria-live="polite">Loading…</p>
+        <progress id="progressBar" value="0" max="100" aria-label="Progress"></progress>
       </div>
 
-      <script>
-        const errorModal = document.getElementById("errorModal");
-        const closeModal = document.getElementById("closeModal");
-        const errorMessage = document.getElementById("errorMessage");
-
-        function showError(message) {
-          errorMessage.textContent = message;
-          errorModal.classList.remove("hidden");
-        }
-
-        closeModal.onclick = () => {
-          errorModal.classList.add("hidden");
-        };
-
-        window.onclick = (event) => {
-          if (event.target === errorModal) {
-            errorModal.classList.add("hidden");
-          }
-        };
-      </script>
+      <footer>
+        <p>Everything runs locally: your game files and saves never leave this browser.</p>
+        <p>
+          Not affiliated with LocalThunk or Playstack. You need to <a href="https://www.playbalatro.com/" rel="noopener">own Balatro</a> to play.
+          Runs on <a href="https://github.com/2dengine/love.js" rel="noopener">love.js</a>.
+          <a href="https://github.com/awest813/web-balatro" rel="noopener">Source &amp; issues</a>
+        </p>
+      </footer>
     </div>
+
+    <!-- Error / info dialog -->
+    <div id="errorModal" class="modal hidden">
+      <div class="modal-content" role="alertdialog" aria-modal="true" aria-labelledby="errorTitle" aria-describedby="errorMessage">
+        <button id="closeModal" class="close" aria-label="Close">&times;</button>
+        <h2 id="errorTitle">Error</h2>
+        <p id="errorMessage">Something went wrong.</p>
+      </div>
+    </div>
+
+    <script src="background.js"></script>
   </body>
 </html>
