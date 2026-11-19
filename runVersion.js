@@ -142,6 +142,16 @@ function setupClipboardBridge() {
         event.preventDefault()
     })
 
+    // Tell the game the bridge is here (see web_patches.lua). The file system is
+    // only available once love.js has started, so wait for it.
+    const markerTimer = setInterval(() => {
+        if (!(window.Module && Module.FS_createDataFile && Module.calledRun)) return
+        clearInterval(markerTimer)
+        try {
+            Module.FS_createDataFile("/", "web_bridge_ready", new Uint8Array([49]), true, true, true)
+        } catch (e) { }
+    }, 50)
+
     const originalOpen = window.open
     window.open = function (url, ...rest) {
         if (typeof url === "string" && url.startsWith(BRIDGE_PREFIX)) {

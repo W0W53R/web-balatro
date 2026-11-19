@@ -538,8 +538,26 @@ local function web_url_encode(s)
     return (s:gsub("[^%w%-_%.~]", function(c) return string.format("%%%02X", string.byte(c)) end))
 end
 
+-- The page writes this file once the bridge is installed. Without it, openURL would
+-- open a blank tab (e.g. when an old cached runVersion.js is used), so only use the
+-- in-game clipboard.
+local WEB_BRIDGE_MARKER = "/web_bridge_ready"
+local web_bridge_ready = false
+local function web_has_bridge()
+    if not web_bridge_ready then
+        local f = io.open(WEB_BRIDGE_MARKER, "rb")
+        if f then
+            f:close()
+            web_bridge_ready = true
+        end
+    end
+    return web_bridge_ready
+end
+
 local function web_bridge(cmd, arg)
+    if not web_has_bridge() then return false end
     love.system.openURL("web-balatro:" .. cmd .. ":" .. web_url_encode(arg or ""))
+    return true
 end
 
 local function web_read_clipboard_file()
@@ -572,6 +590,7 @@ end
 local function web_wrap_async_paste(fn)
     return function(...)
         local args = {...}
+        if not web_has_bridge() then return fn(...) end
         local before = web_read_clipboard_file()
         os.remove(WEB_CLIPBOARD_FILE)
         web_bridge("clipboard-read")
