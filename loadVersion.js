@@ -99,7 +99,13 @@ async function loadVersion(versionId) {
             const zip = new JSZip()
             for (const file_name of Object.keys(window.templates)) {
                 progress_bar.value += 20;
-                zip.file(file_name, window.templates[file_name].replace("%%DATAURI%%", game_uri).replace("%%VERSION_NAME%%", loaded_game_id))
+                let contents = window.templates[file_name].replace("%%DATAURI%%", game_uri).replace("%%VERSION_NAME%%", loaded_game_id)
+                if (file_name === "index.html") {
+                    // Copy/paste support (see setupClipboardBridge in runVersion.js)
+                    contents = contents.replace('<script src="love.min.js"></script>', (tag) =>
+                        "<script>" + setupClipboardBridge.toString() + ";setupClipboardBridge()</script>" + tag)
+                }
+                zip.file(file_name, contents)
             }
             status_text.innerText = "Zipping"
             progress_bar.value = 95;

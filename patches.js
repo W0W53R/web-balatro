@@ -477,6 +477,158 @@ math.log = function(x, base)
   return _log(x)
 end
 
+-- Keyboard state
+-- love.keyboard.isDown reads the key state at the time it is called. On the web the
+-- game often runs at a low frame rate, so a quick Shift+letter or Ctrl+V can be
+-- pressed and released within one frame and the modifier is already "up" by the
+-- time the letter is handled. Track key state in event order instead.
+local web_keys_down = {}
+local web_scancodes_down = {}
+
+local _kp_handler = love.handlers.keypressed
+love.handlers.keypressed = function(k, sc, r, ...)
+    if k then web_keys_down[k] = true end
+    if sc then web_scancodes_down[sc] = true end
+    return _kp_handler(k, sc, r, ...)
+end
+
+local _kr_handler = love.handlers.keyreleased
+love.handlers.keyreleased = function(k, sc, ...)
+    if k then web_keys_down[k] = nil end
+    if sc then web_scancodes_down[sc] = nil end
+    return _kr_handler(k, sc, ...)
+end
+
+local _focus_handler = love.handlers.focus
+love.handlers.focus = function(f, ...)
+    -- Key releases are not delivered while the page is unfocused
+    if not f then
+        web_keys_down = {}
+        web_scancodes_down = {}
+    end
+    return _focus_handler(f, ...)
+end
+
+local function web_any_down(tbl, ...)
+    for i = 1, select('#', ...) do
+        local v = select(i, ...)
+        if type(v) == 'table' then
+            for _, x in ipairs(v) do
+                if tbl[x] then return true end
+            end
+        elseif tbl[v] then
+            return true
+        end
+    end
+    return false
+end
+
+love.keyboard.isDown = function(...) return web_any_down(web_keys_down, ...) end
+love.keyboard.isScancodeDown = function(...) return web_any_down(web_scancodes_down, ...) end
+
+-- Clipboard
+-- love.js keeps the clipboard inside the wasm module, so it never reaches the
+-- browser. runVersion.js bridges it: Lua sends requests through openURL (which
+-- calls window.open), and the page writes the browser clipboard to a file.
+local WEB_CLIPBOARD_FILE = "/web_clipboard.txt"
+local web_clipboard = ""
+local web_suppress_read = false
+
+local function web_url_encode(s)
+    return (s:gsub("[^%w%-_%.~]", function(c) return string.format("%%%02X", string.byte(c)) end))
+end
+
+local function web_bridge(cmd, arg)
+    love.system.openURL("web-balatro:" .. cmd .. ":" .. web_url_encode(arg or ""))
+end
+
+local function web_read_clipboard_file()
+    local f = io.open(WEB_CLIPBOARD_FILE, "rb")
+    if not f then return nil end
+    local text = f:read("*a")
+    f:close()
+    return text
+end
+
+love.system.setClipboardText = function(text)
+    text = tostring(text or "")
+    web_clipboard = text
+    web_bridge("clipboard-write", text)
+end
+
+love.system.getClipboardText = function()
+    local text = web_read_clipboard_file()
+    if text then web_clipboard = text end
+    -- Ask the page to refresh the file for the next read (needed when pasting
+    -- with the mouse, where the browser gives no paste event)
+    if not web_suppress_read then
+        web_bridge("clipboard-read")
+    end
+    return web_clipboard
+end
+
+-- Paste buttons (e.g. "Paste Seed") have no paste event, and the browser clipboard
+-- can only be read asynchronously. Wait briefly for the page to answer before pasting.
+local function web_wrap_async_paste(fn)
+    return function(...)
+        local args = {...}
+        local before = web_read_clipboard_file()
+        os.remove(WEB_CLIPBOARD_FILE)
+        web_bridge("clipboard-read")
+        local start = love.timer.getTime()
+        local function finish()
+            if not web_read_clipboard_file() and before then
+                -- The page did not answer; fall back to the last value
+                web_clipboard = before
+            end
+            web_suppress_read = true
+            local ok, err = pcall(fn, unpack(args))
+            web_suppress_read = false
+            if not ok then error(err, 0) end
+        end
+        if not (G and G.E_MANAGER and Event) then
+            return finish()
+        end
+        G.E_MANAGER:add_event(Event({
+            blockable = false,
+            blocking = false,
+            no_delete = true,
+            func = function()
+                if web_read_clipboard_file() or love.timer.getTime() - start > 2 then
+                    finish()
+                    return true
+                end
+                return false
+            end
+        }))
+    end
+end
+
+-- G.FUNCS is created after this file runs, so wrap it the first time input arrives
+local web_wrapped_paste_seed = nil
+local function web_hook_paste_buttons()
+    if G and G.FUNCS and G.FUNCS.paste_seed and not web_wrapped_paste_seed then
+        web_wrapped_paste_seed = web_wrap_async_paste(G.FUNCS.paste_seed)
+        G.FUNCS.paste_seed = web_wrapped_paste_seed
+    elseif web_wrapped_paste_seed and G.FUNCS.paste_seed ~= web_wrapped_paste_seed then
+        -- Something (e.g. a mod) replaced it; wrap the new one
+        web_wrapped_paste_seed = web_wrap_async_paste(G.FUNCS.paste_seed)
+        G.FUNCS.paste_seed = web_wrapped_paste_seed
+    end
+end
+
+local _mp_handler = love.handlers.mousepressed
+love.handlers.mousepressed = function(...)
+    web_hook_paste_buttons()
+    return _mp_handler(...)
+end
+
+local _tp_handler = love.handlers.touchpressed
+love.handlers.touchpressed = function(...)
+    web_hook_paste_buttons()
+    return _tp_handler(...)
+end
+
 -- Patch load for smods
 -- btw, mod support is pretty nonexistent
 load = loadstring`,
