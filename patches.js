@@ -604,28 +604,90 @@ local function web_wrap_async_paste(fn)
     end
 end
 
--- G.FUNCS is created after this file runs, so wrap it the first time input arrives
+-- Text input
+-- Balatro queues key presses in a set and handles them once per frame, so at a low
+-- frame rate keys typed in the same frame are merged ("aa" becomes "a"), come out in
+-- random order, and lose Shift if it was released before the frame ended. While a
+-- text box is active, handle each key as soon as it arrives instead.
+local function web_ctrl_held(held)
+    return held["lctrl"] or held["rctrl"] or held["lgui"] or held["rgui"]
+end
+
+local function web_paste_into_text_input()
+    local text = love.system.getClipboardText() or ""
+    for i = 1, #text do
+        if not G.CONTROLLER.text_input_hook then break end
+        local c = text:sub(i, i)
+        if c ~= "\\r" and c ~= "\\n" then
+            G.FUNCS.text_input_key({key = c})
+        end
+    end
+end
+
+local function web_hook_controller()
+    if not Controller or Controller.web_key_press_patched then return end
+    Controller.web_key_press_patched = true
+    local _key_press = Controller.key_press
+    function Controller:key_press(key)
+        if not self.text_input_hook or self.locks.frame or not (G and G.FUNCS and G.FUNCS.text_input_key) then
+            return _key_press(self, key)
+        end
+        self.held_keys[key] = true
+        if string.sub(key, 1, 2) == 'kp' then key = string.sub(key, 3) end
+        if key == 'enter' then key = 'return' end
+
+        if key == "escape" then
+            self.text_input_hook = nil
+        elseif key == "capslock" then
+            self.capslock = not self.capslock
+        elseif web_ctrl_held(self.held_keys) then
+            -- Ctrl/Cmd shortcuts: paste on V, otherwise don't type the letter
+            if key == "v" then web_paste_into_text_input() end
+        else
+            G.FUNCS.text_input_key{
+                e = self.text_input_hook,
+                key = key,
+                caps = self.held_keys["lshift"] or self.held_keys["rshift"]
+            }
+        end
+    end
+end
+
+-- Paste Seed / Copy seed buttons
 local web_wrapped_paste_seed = nil
 local function web_hook_paste_buttons()
-    if G and G.FUNCS and G.FUNCS.paste_seed and not web_wrapped_paste_seed then
-        web_wrapped_paste_seed = web_wrap_async_paste(G.FUNCS.paste_seed)
-        G.FUNCS.paste_seed = web_wrapped_paste_seed
-    elseif web_wrapped_paste_seed and G.FUNCS.paste_seed ~= web_wrapped_paste_seed then
-        -- Something (e.g. a mod) replaced it; wrap the new one
+    if not (G and G.FUNCS and G.FUNCS.paste_seed) then return end
+    -- Use the real (browser) clipboard rather than the console-only in-game one
+    G.F_LOCAL_CLIPBOARD = false
+    if G.FUNCS.paste_seed ~= web_wrapped_paste_seed then
+        -- First time, or something (e.g. a mod) replaced it
         web_wrapped_paste_seed = web_wrap_async_paste(G.FUNCS.paste_seed)
         G.FUNCS.paste_seed = web_wrapped_paste_seed
     end
 end
 
+-- Controller and G.FUNCS are created after this file runs, so hook them the first
+-- time input arrives
+local function web_hook_game()
+    web_hook_controller()
+    web_hook_paste_buttons()
+end
+
+local _kp_handler2 = love.handlers.keypressed
+love.handlers.keypressed = function(...)
+    web_hook_game()
+    return _kp_handler2(...)
+end
+
 local _mp_handler = love.handlers.mousepressed
 love.handlers.mousepressed = function(...)
-    web_hook_paste_buttons()
+    web_hook_game()
     return _mp_handler(...)
 end
 
 local _tp_handler = love.handlers.touchpressed
 love.handlers.touchpressed = function(...)
-    web_hook_paste_buttons()
+    web_hook_game()
     return _tp_handler(...)
 end
 

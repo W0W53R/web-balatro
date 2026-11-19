@@ -52,7 +52,7 @@ Don't put the portable player on the internet because it contains Balatro's sour
 - Main gameplay loop
 - Sound
 - Saves
-- Copy and paste (Ctrl+V, the 'Paste Seed' button, and copying from the game use the browser clipboard)
+- Copy and paste using the browser clipboard: 'Copy' and 'Paste Seed' buttons, plus Ctrl+V (Cmd+V) in text boxes
 - Simple Mod Support
 
 ## Planned Features
