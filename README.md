@@ -21,6 +21,8 @@ The RNG generator on the web differes from the native RNG implementation, so see
 
 Some computers run the internal WebGL shaders differently and may result in odd color effects.
 
+Versions built before copy/paste support was added need to be rebuilt to get it.
+
 ## Caching
 
 The site will cache each built version in IndexedDB, and each version will have its own save, also located in IndexedDB.
@@ -50,6 +52,7 @@ Don't put the portable player on the internet because it contains Balatro's sour
 - Main gameplay loop
 - Sound
 - Saves
+- Copy and paste using the browser clipboard: 'Copy' and 'Paste Seed' buttons, plus Ctrl+V (Cmd+V) in text boxes
 - Simple Mod Support
 
 ## Planned Features
